@@ -118,7 +118,7 @@ def series_summary():
     items = get_db_items()
     with open('data/series_summary.csv', 'wb') as csv_file:
         csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(['series', 'total described', 'total digitised', 'total pages digitised'])
+        csv_writer.writerow(['series', 'total described', 'total digitised', 'percentage digitised', 'total pages digitised'])
         for series in SERIES_LIST:
             total = items.count({'series': series['series']})
             total_digitised = items.count({'series': series['series'], 'digitised_status': True})
