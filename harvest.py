@@ -2,8 +2,15 @@ from rstools.client import RSSearchClient
 from pymongo import MongoClient, GEO2D
 import time
 import csv
+import os
+import requests
+from PIL import Image, ImageOps
 
 from credentials import MONGOLAB_URL
+
+IMAGES_DIR = 'images'
+
+IMAGE_SIZES = [(200, 200), (500, 500)]
 
 SERIES_LIST = [
     {'series': 'SP11/26', 'range': []},
@@ -40,14 +47,15 @@ class SeriesHarvester():
         self.pages_complete = 0
         self.client = RSSearchClient()
         self.prepare_harvest()
-        self.items = self.get_db()
+        db = self.get_db()
+        self.items = db.items
 
     def get_db(self):
         dbclient = MongoClient(MONGOLAB_URL)
         db = dbclient.get_default_database()
-        items = db.items
+        #items = db.items
         #items.remove()
-        return items
+        return db
 
     def get_total(self):
         return self.client.total_results
@@ -72,12 +80,50 @@ class SeriesHarvester():
             if self.control:
                 response = self.client.search(series=self.series, page=page, control=self.control)
             else:
-                response = self.client.search(series=self.series, page=page)
+                response = self.client.search(series=self.series, page=page, sort='9')
             self.items.insert_many(response['results'])
             self.pages_complete += 1
             page += 1
             print '{} pages complete'.format(self.pages_complete)
             time.sleep(1)
+
+    def harvest_images(self):
+        db = self.get_db()
+        items = db.items.find({'series': self.series, 'digitised_status': True})
+        images = db.images
+        for item in items:
+            directory = os.path.join(IMAGES_DIR, '{}/{}-[{}]'.format(self.series.replace('/', '-'), item['control_symbol'].replace('/', '-'), item['identifier']))
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                os.makedirs(os.path.join(directory, 'thumbs'))
+            for page in range(1, item['digitised_pages'] + 1):
+                filename = '{}/{}-p{}.jpg'.format(directory, item['identifier'], page)
+                if not os.path.exists(filename):
+                    img_url = 'http://recordsearch.naa.gov.au/NaaMedia/ShowImage.asp?B={}&S={}&T=P'.format(item['identifier'], page)
+                    response = requests.get(img_url, stream=True)
+                    image = Image.open(StringIO(response.content))
+                    width, height = image.size
+                    image.save(filename)
+                    del response
+                    image_meta = {
+                        'item_id': item['_id'],
+                        'page': page,
+                        'width': width,
+                        'height': height
+                        }
+                    images.save(image_meta)
+                    for size in IMAGE_SIZES:
+                        new_width, new_height = size
+                        thumb_file = '{}/thumbs/{}-p{}-{}-sq.jpg'.format(directory, item['identifier'], page, new_width)
+                        thumb_image = ImageOps.fit(image, size, Image.ANTIALIAS)
+                        thumb_image.save(thumb_file)
+                    thumb_file = '{}/thumbs/{}-p{}-200.jpg'.format(directory, item['identifier'], page)
+                    thumb_image = image.copy()
+                    thumb_image.thumbnail((200, 200))
+                    thumb_image.save(thumb_file)
+                    image.close()
+                    thumb_image.close()
+                time.sleep(0.5)
 
 
 def harvest_all_series():
